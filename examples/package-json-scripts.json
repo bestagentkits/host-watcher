@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "build": "python3 ../host-watcher/scripts/host_gate.py -- vite build",
+    "test": "python3 ../host-watcher/scripts/host_gate.py --max-wait 600 -- vitest run",
+    "host:status": "python3 ../host-watcher/scripts/host_status.py"
+  }
+}

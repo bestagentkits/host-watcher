@@ -1,0 +1,11 @@
+# For self-hosted runners shared by several jobs or agents: wait out a
+# saturated host before the heavy step, and fail fast if the disk is full.
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v7
+      - name: Host status
+        run: python3 tools/host-watcher/scripts/host_status.py
+      - name: Tests (gated)
+        run: python3 tools/host-watcher/scripts/host_gate.py --max-wait 900 -- make test
