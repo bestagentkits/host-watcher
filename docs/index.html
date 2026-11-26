@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>host-watcher: How it works</title>
+<meta name="description" content="How host-watcher samples CPU, memory, disk and free space, turns them into one verdict, and gates heavy commands for parallel coding agents.">
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f23;--muted:#5d636d;--card:#ffffff;--line:#d9dce1;--accent:#2f6fde;
+--go:#1f9d55;--throttle:#c98a04;--unknown:#7a7f88;--clean:#7b4fd6;--hold:#d0342c;--code:#f1f2f4}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--fg:#e7e9ec;--muted:#9aa1ab;--card:#1b1e22;--line:#30353c;
+--accent:#6fa0ff;--go:#3cc47a;--throttle:#e3a72a;--unknown:#9aa1ab;--clean:#a283f0;--hold:#f0605a;--code:#23272c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:960px;margin:0 auto;padding:24px 16px 64px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:1.9rem;margin:.2em 0}
+h2{font-size:1.35rem;margin:2.2em 0 .5em;padding-top:.4em;border-top:1px solid var(--line)}
+p.lead{color:var(--muted);font-size:1.08rem;margin-top:0}
+a{color:var(--accent)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}
+code{background:var(--code);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto}
+.lang{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.lang button{border:0;background:transparent;color:var(--fg);padding:6px 14px;cursor:pointer;font:inherit}
+.lang button[aria-pressed=true]{background:var(--accent);color:#fff}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:14px 0}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--fg);font:13px system-ui,sans-serif}
+svg .m{fill:var(--muted);font-size:11.5px}
+svg .box{fill:var(--card);stroke:var(--line);stroke-width:1.5}
+svg .ln{stroke:var(--muted);stroke-width:1.5;fill:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.v{border-radius:10px;padding:10px 12px;border:1px solid var(--line);background:var(--card)}
+.v b{display:block;font-size:1.05rem}
+.v small{color:var(--muted)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+table{border-collapse:collapse;width:100%;font-size:.94rem}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+.tw{overflow-x:auto}
+[data-l]{display:none}
+html[lang=en] [data-l=en],html[lang=vi] [data-l=vi]{display:revert}
+footer{color:var(--muted);font-size:.9rem;margin-top:48px}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>host-watcher</h1>
+    <p class="lead"><span data-l="en">How it works: one verdict for a machine shared by many coding agents.</span><span data-l="vi">Cách hoạt động: một kết luận duy nhất cho chiếc máy mà nhiều coding agent dùng chung.</span></p>
+  </div>
+  <div class="lang" role="group" aria-label="Language">
+    <button type="button" data-set="en">English</button><button type="button" data-set="vi">Tiếng Việt</button>
+  </div>
+</header>
+
+<h2><span data-l="en">The problem</span><span data-l="vi">Vấn đề</span></h2>
+<p data-l="en">Run five agents in five worktrees and they all start <code>npm install</code>, test suites and builds at the same moment. The disk saturates, everything slows down, and nobody can tell which job did it. host-watcher measures the machine, tells every agent the same thing, and lets heavy commands wait their turn. It runs locally: no network, no telemetry, no database, no required daemon.</p>
+<p data-l="vi">Chạy năm agent trong năm worktree, cả năm cùng lúc bắt đầu <code>npm install</code>, test và build. Ổ đĩa quá tải, mọi thứ chậm lại, và không ai biết job nào gây ra. host-watcher đo tình trạng máy, báo cùng một thông tin cho mọi agent, và cho các lệnh nặng chờ đến lượt. Mọi thứ chạy cục bộ: không gọi mạng, không telemetry, không database, không bắt buộc chạy daemon.</p>
+
+<h2><span data-l="en">Architecture</span><span data-l="vi">Kiến trúc</span></h2>
+<div class="card">
+<svg viewBox="0 0 900 360" role="img" aria-label="Architecture diagram">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <rect class="box" x="20" y="30" width="170" height="130" rx="10"/>
+  <text x="105" y="58" text-anchor="middle" font-weight="600">OS counters</text>
+  <text class="m" x="105" y="82" text-anchor="middle">/proc · vm_stat · PDH</text>
+  <text class="m" x="105" y="102" text-anchor="middle">CPU · memory</text>
+  <text class="m" x="105" y="122" text-anchor="middle">disk active % · latency</text>
+  <text class="m" x="105" y="142" text-anchor="middle">free space · per-process I/O</text>
+
+  <rect class="box" x="260" y="30" width="190" height="130" rx="10" style="stroke:var(--accent)"/>
+  <text x="355" y="58" text-anchor="middle" font-weight="600">watcher</text>
+  <text class="m" x="355" y="82" text-anchor="middle">host_watch.py (or Go binary)</text>
+  <text class="m" x="355" y="102" text-anchor="middle">samples every few seconds</text>
+  <text class="m" x="355" y="122" text-anchor="middle">median of samples → verdict</text>
+  <text class="m" x="355" y="142" text-anchor="middle">one instance (watch.lock)</text>
+
+  <rect class="box" x="520" y="20" width="200" height="150" rx="10"/>
+  <text x="620" y="46" text-anchor="middle" font-weight="600">~/.host-watcher/</text>
+  <text class="m" x="620" y="72" text-anchor="middle">status.json (snapshot, ≤15 s fresh)</text>
+  <text class="m" x="620" y="94" text-anchor="middle">inbox/&lt;worktree-hash&gt;.json</text>
+  <text class="m" x="620" y="116" text-anchor="middle">config.json (thresholds)</text>
+  <text class="m" x="620" y="138" text-anchor="middle">watch.lock · watch.pid</text>
+  <text class="m" x="620" y="158" text-anchor="middle">shared by Python and Go</text>
+
+  <path class="ln" d="M190 95H258" marker-end="url(#a)"/>
+  <path class="ln" d="M450 95H518" marker-end="url(#a)"/>
+
+  <rect class="box" x="20" y="230" width="190" height="100" rx="10"/>
+  <text x="115" y="258" text-anchor="middle" font-weight="600">host_status.py</text>
+  <text class="m" x="115" y="282" text-anchor="middle">read snapshot, or</text>
+  <text class="m" x="115" y="302" text-anchor="middle">sample once if stale</text>
+
+  <rect class="box" x="240" y="230" width="190" height="100" rx="10"/>
+  <text x="335" y="258" text-anchor="middle" font-weight="600">host_gate.py -- cmd</text>
+  <text class="m" x="335" y="282" text-anchor="middle">wait on hold / clean</text>
+  <text class="m" x="335" y="302" text-anchor="middle">then run at low priority</text>
+
+  <rect class="box" x="460" y="230" width="190" height="100" rx="10"/>
+  <text x="555" y="258" text-anchor="middle" font-weight="600">agent hooks</text>
+  <text class="m" x="555" y="282" text-anchor="middle">Claude Code · Pi · Codex</text>
+  <text class="m" x="555" y="302" text-anchor="middle">read-only, always exit 0</text>
+
+  <rect class="box" x="680" y="230" width="200" height="100" rx="10"/>
+  <text x="780" y="258" text-anchor="middle" font-weight="600">cache_cleanup.py</text>
+  <text class="m" x="780" y="282" text-anchor="middle">inventory + dry-run</text>
+  <text class="m" x="780" y="302" text-anchor="middle">--apply only when safe</text>
+
+  <path class="ln" d="M560 170L130 228" marker-end="url(#a)"/>
+  <path class="ln" d="M590 170L340 228" marker-end="url(#a)"/>
+  <path class="ln" d="M620 170V228" marker-end="url(#a)"/>
+  <path class="ln" d="M660 170L770 228" marker-end="url(#a)"/>
+</svg>
+</div>
+<p data-l="en">One optional watcher samples the OS and writes a snapshot. Everything else reads that snapshot, so ten agents asking "is the machine busy?" cost nothing. Without a watcher, <code>host_status.py</code> and the gate sample on their own.</p>
+<p data-l="vi">Một watcher (tuỳ chọn) đọc số liệu từ hệ điều hành và ghi ra một snapshot. Mọi thành phần khác chỉ đọc snapshot đó, nên mười agent cùng hỏi "máy có đang bận không?" cũng gần như không tốn gì. Khi không có watcher, <code>host_status.py</code> và gate sẽ tự đo.</p>
+
+<h2><span data-l="en">Five verdicts</span><span data-l="vi">Năm kết luận</span></h2>
+<div class="grid">
+  <div class="v"><b><span class="dot" style="background:var(--go)"></span>go</b><small data-l="en">Plenty of headroom. Run anything.</small><small data-l="vi">Máy còn dư sức. Chạy gì cũng được.</small></div>
+  <div class="v"><b><span class="dot" style="background:var(--throttle)"></span>throttle</b><small data-l="en">Busy. Run, but avoid starting extra parallel jobs.</small><small data-l="vi">Máy đang bận. Vẫn chạy, nhưng đừng mở thêm job song song.</small></div>
+  <div class="v"><b><span class="dot" style="background:var(--unknown)"></span>unknown</b><small data-l="en">Nothing could be measured. Never blocks.</small><small data-l="vi">Không đo được gì. Không bao giờ chặn lệnh.</small></div>
+  <div class="v"><b><span class="dot" style="background:var(--clean)"></span>clean</b><small data-l="en">A watched volume is low on free space. Free some first.</small><small data-l="vi">Một ổ đang theo dõi sắp hết chỗ. Hãy dọn bớt trước.</small></div>
+  <div class="v"><b><span class="dot" style="background:var(--hold)"></span>hold</b><small data-l="en">Saturated. Heavy commands wait.</small><small data-l="vi">Máy đã quá tải. Lệnh nặng phải chờ.</small></div>
+</div>
+<p data-l="en">Severity order: go &lt; throttle &lt; unknown &lt; clean &lt; hold. The worst signal wins. Every verdict exits 0, so scripts read the verdict, not the exit code.</p>
+<p data-l="vi">Thứ tự mức độ: go &lt; throttle &lt; unknown &lt; clean &lt; hold. Tín hiệu tệ nhất quyết định kết luận. Mọi kết luận đều trả exit code 0, nên script cần đọc kết luận chứ không dựa vào exit code.</p>
+
+<h2><span data-l="en">How a verdict is decided</span><span data-l="vi">Kết luận được quyết định thế nào</span></h2>
+<div class="card">
+<svg viewBox="0 0 900 250" role="img" aria-label="Decision flow">
+  <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <rect class="box" x="10" y="95" width="130" height="60" rx="10"/>
+  <text x="75" y="122" text-anchor="middle" font-weight="600">3 samples</text>
+  <text class="m" x="75" y="142" text-anchor="middle">take the median</text>
+  <path class="ln" d="M140 125H178" marker-end="url(#b)"/>
+
+  <g>
+  <rect class="box" x="180" y="10" width="300" height="50" rx="8"/>
+  <text x="195" y="32" font-weight="600">Disk</text>
+  <text class="m" x="195" y="50">active ≥90% or latency ≥100 ms → hold · ≥70% / ≥50 ms → throttle</text>
+  <rect class="box" x="180" y="70" width="300" height="50" rx="8"/>
+  <text x="195" y="92" font-weight="600">CPU · Memory</text>
+  <text class="m" x="195" y="110">CPU ≥95% / mem ≥95% → hold · ≥85% / ≥88% → throttle</text>
+  <rect class="box" x="180" y="130" width="300" height="50" rx="8"/>
+  <text x="195" y="152" font-weight="600">Free space</text>
+  <text class="m" x="195" y="170">any watched volume &lt; 25 GB free → clean</text>
+  <rect class="box" x="180" y="190" width="300" height="50" rx="8"/>
+  <text x="195" y="212" font-weight="600">Nothing measured</text>
+  <text class="m" x="195" y="230">no CPU, memory or disk sample → unknown</text>
+  </g>
+  <path class="ln" d="M480 35C560 35 560 125 600 125" marker-end="url(#b)"/>
+  <path class="ln" d="M480 95C540 95 560 125 600 125"/>
+  <path class="ln" d="M480 155C540 155 560 125 600 125"/>
+  <path class="ln" d="M480 215C560 215 560 125 600 125"/>
+  <rect class="box" x="602" y="90" width="140" height="70" rx="10" style="stroke:var(--accent)"/>
+  <text x="672" y="120" text-anchor="middle" font-weight="600">worst wins</text>
+  <text class="m" x="672" y="140" text-anchor="middle">max severity</text>
+  <path class="ln" d="M742 125H780" marker-end="url(#b)"/>
+  <rect x="782" y="100" width="105" height="50" rx="25" fill="var(--hold)" opacity=".15" stroke="var(--hold)"/>
+  <text x="834" y="130" text-anchor="middle" font-weight="600">verdict</text>
+</svg>
+</div>
+<p data-l="en">Only disk <em>active time</em> and <em>latency</em> count. A fast sequential copy at high throughput is not contention; queued I/O waiting on the disk is. All thresholds live in <code>config.json</code> (see <a href="configuration.md">configuration</a>).</p>
+<p data-l="vi">Với ổ đĩa, chỉ <em>thời gian bận</em> (active time) và <em>độ trễ</em> (latency) được tính. Một lệnh copy tuần tự nhanh, throughput cao, không phải là tranh chấp; I/O phải xếp hàng chờ ổ đĩa mới là tranh chấp. Mọi ngưỡng nằm trong <code>config.json</code> (xem <a href="configuration.md">configuration</a>).</p>
+
+<h2><span data-l="en">The gate</span><span data-l="vi">Gate</span></h2>
+<div class="card">
+<svg viewBox="0 0 900 200" role="img" aria-label="Gate timeline">
+  <defs><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <path class="ln" d="M20 110H880" marker-end="url(#c)"/>
+  <text class="m" x="860" y="135" text-anchor="end">time</text>
+  <rect x="30" y="80" width="90" height="60" rx="8" fill="var(--hold)" opacity=".18" stroke="var(--hold)"/>
+  <text x="75" y="106" text-anchor="middle" font-weight="600">hold</text><text class="m" x="75" y="124" text-anchor="middle">wait 15 s</text>
+  <rect x="130" y="80" width="140" height="60" rx="8" fill="var(--hold)" opacity=".18" stroke="var(--hold)"/>
+  <text x="200" y="106" text-anchor="middle" font-weight="600">hold</text><text class="m" x="200" y="124" text-anchor="middle">wait 30 s</text>
+  <rect x="280" y="80" width="220" height="60" rx="8" fill="var(--clean)" opacity=".18" stroke="var(--clean)"/>
+  <text x="390" y="106" text-anchor="middle" font-weight="600">clean</text><text class="m" x="390" y="124" text-anchor="middle">wait 60 s (then 60 s …)</text>
+  <rect x="510" y="80" width="110" height="60" rx="8" fill="var(--go)" opacity=".18" stroke="var(--go)"/>
+  <text x="565" y="106" text-anchor="middle" font-weight="600">go</text><text class="m" x="565" y="124" text-anchor="middle">start</text>
+  <rect x="630" y="80" width="220" height="60" rx="8" class="box" style="stroke:var(--accent)"/>
+  <text x="740" y="106" text-anchor="middle" font-weight="600">npm run build</text><text class="m" x="740" y="124" text-anchor="middle">low CPU + I/O priority</text>
+  <text class="m" x="30" y="40">max wait 30 min → run anyway with a warning · --max-wait 0 skips waiting</text>
+  <text class="m" x="30" y="60">exit code = child's exit code · 5 = could not start · 2 = bad arguments</text>
+  <text class="m" x="30" y="175">nice + ionice (Linux) · taskpolicy -b (macOS) · BELOW_NORMAL (Windows)</text>
+</svg>
+</div>
+<pre>python scripts/host_gate.py -- npm run build</pre>
+<p data-l="en">The gate never refuses to run. It waits only on <code>hold</code> and <code>clean</code>, backs off 15 → 30 → 60 seconds, then starts the command at low priority and passes its exit code and signals through. If the status cannot be read, it runs immediately.</p>
+<p data-l="vi">Gate không bao giờ từ chối chạy lệnh. Nó chỉ chờ khi kết luận là <code>hold</code> hoặc <code>clean</code>, giãn thời gian chờ 15 → 30 → 60 giây, sau đó chạy lệnh ở mức ưu tiên thấp và chuyển tiếp nguyên exit code và tín hiệu. Nếu không đọc được trạng thái máy, nó chạy ngay.</p>
+
+<h2><span data-l="en">Worktree inbox</span><span data-l="vi">Inbox theo worktree</span></h2>
+<div class="card">
+<svg viewBox="0 0 900 190" role="img" aria-label="Worktree inbox flow">
+  <defs><marker id="d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <rect class="box" x="20" y="60" width="180" height="70" rx="10"/>
+  <text x="110" y="90" text-anchor="middle" font-weight="600">watcher sees</text>
+  <text class="m" x="110" y="110" text-anchor="middle">top I/O pid in worktree B</text>
+  <path class="ln" d="M200 95H258" marker-end="url(#d)"/>
+  <rect class="box" x="260" y="60" width="230" height="70" rx="10"/>
+  <text x="375" y="90" text-anchor="middle" font-weight="600">inbox/sha256(B)[:16].json</text>
+  <text class="m" x="375" y="110" text-anchor="middle">expires after 10 min</text>
+  <path class="ln" d="M490 95H548" marker-end="url(#d)"/>
+  <rect class="box" x="550" y="20" width="330" height="60" rx="10"/>
+  <text x="565" y="45" font-weight="600">agent in worktree B</text>
+  <text class="m" x="565" y="65">hook or gate shows: "your job is the top I/O user"</text>
+  <rect class="box" x="550" y="110" width="330" height="60" rx="10"/>
+  <text x="565" y="135" font-weight="600">agents in A, C, D</text>
+  <text class="m" x="565" y="155">see only the shared verdict</text>
+</svg>
+</div>
+<p data-l="en">The watcher maps the heaviest I/O process to its git worktree and leaves a notice only for that worktree, so the agent that caused the pressure is the one asked to slow down. Needs per-process I/O: Linux, or Windows with the Go watcher.</p>
+<p data-l="vi">Watcher tìm process đang ghi/đọc đĩa nhiều nhất, xác định nó thuộc git worktree nào, rồi chỉ để lại thông báo cho đúng worktree đó. Nhờ vậy agent gây ra áp lực là agent được nhắc chậm lại. Tính năng này cần số liệu I/O theo từng process: có trên Linux, và trên Windows khi dùng watcher bản Go.</p>
+
+<h2><span data-l="en">Safe cache cleanup</span><span data-l="vi">Dọn cache an toàn</span></h2>
+<div class="card">
+<svg viewBox="0 0 900 140" role="img" aria-label="Cleanup filter">
+  <defs><marker id="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <g font-weight="600">
+  <rect class="box" x="10" y="40" width="120" height="56" rx="8"/><text x="70" y="73" text-anchor="middle">--glob match</text>
+  <rect class="box" x="150" y="40" width="120" height="56" rx="8"/><text x="210" y="73" text-anchor="middle">real dir</text>
+  <rect class="box" x="290" y="40" width="120" height="56" rx="8"/><text x="350" y="73" text-anchor="middle">owned by you</text>
+  <rect class="box" x="430" y="40" width="120" height="56" rx="8"/><text x="490" y="73" text-anchor="middle">idle ≥ 60 min</text>
+  <rect class="box" x="570" y="40" width="140" height="56" rx="8"/><text x="640" y="73" text-anchor="middle">no live process</text>
+  <rect x="730" y="40" width="160" height="56" rx="8" fill="var(--go)" opacity=".18" stroke="var(--go)"/><text x="810" y="73" text-anchor="middle">candidate</text>
+  </g>
+  <path class="ln" d="M130 68H148" marker-end="url(#e)"/><path class="ln" d="M270 68H288" marker-end="url(#e)"/>
+  <path class="ln" d="M410 68H428" marker-end="url(#e)"/><path class="ln" d="M550 68H568" marker-end="url(#e)"/>
+  <path class="ln" d="M710 68H728" marker-end="url(#e)"/>
+  <text class="m" x="10" y="125">no symlinks · no junctions · process list unreadable → nothing deleted · dry-run unless --apply</text>
+</svg>
+</div>
+<p data-l="en">Shared package caches (npm, pip, Go, Cargo…) are only listed with their own prune command; host-watcher never deletes them. See <a href="cleanup-safety.md">cleanup safety</a>.</p>
+<p data-l="vi">Các cache dùng chung của trình quản lý gói (npm, pip, Go, Cargo…) chỉ được liệt kê kèm lệnh dọn riêng của chúng; host-watcher không bao giờ tự xoá. Xem <a href="cleanup-safety.md">cleanup safety</a>.</p>
+
+<h2><span data-l="en">Platform support</span><span data-l="vi">Nền tảng hỗ trợ</span></h2>
+<div class="tw"><table>
+<tr><th></th><th>Linux</th><th>WSL</th><th>Windows</th><th>macOS</th></tr>
+<tr><td>CPU · memory</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td><span data-l="en">Disk active / latency</span><span data-l="vi">Độ bận / độ trễ ổ đĩa</span></td><td>✓</td><td><span data-l="en">virtual disk</span><span data-l="vi">ổ ảo</span></td><td>✓</td><td>—</td></tr>
+<tr><td><span data-l="en">Free space</span><span data-l="vi">Dung lượng trống</span></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td><span data-l="en">Worktree inbox</span><span data-l="vi">Inbox theo worktree</span></td><td>✓</td><td>✓</td><td><span data-l="en">Go watcher</span><span data-l="vi">watcher bản Go</span></td><td>—</td></tr>
+</table></div>
+<p data-l="en">Details in <a href="platform-support.md">platform support</a>.</p>
+<p data-l="vi">Chi tiết trong <a href="platform-support.md">platform support</a>.</p>
+
+<h2><span data-l="en">Quick start</span><span data-l="vi">Bắt đầu nhanh</span></h2>
+<pre>git clone https://github.com/bestagentkits/host-watcher
+cd host-watcher
+python scripts/host_status.py
+python scripts/host_watch.py --detach
+python scripts/host_gate.py -- npm run build
+python scripts/cache_cleanup.py --dry-run</pre>
+<p data-l="en">Hooks for Claude Code, Pi, Codex and others: <a href="integrations.md">integrations</a>. Prebuilt Go binaries: <a href="https://github.com/bestagentkits/host-watcher/releases">releases</a>.</p>
+<p data-l="vi">Hook cho Claude Code, Pi, Codex và các agent khác: <a href="integrations.md">integrations</a>. Binary Go dựng sẵn: <a href="https://github.com/bestagentkits/host-watcher/releases">releases</a>.</p>
+
+<footer>MIT License · <a href="https://github.com/bestagentkits/host-watcher">github.com/bestagentkits/host-watcher</a></footer>
+</main>
+<script>
+(function(){
+  var html=document.documentElement, btns=document.querySelectorAll('.lang button');
+  function set(l){html.lang=l;btns.forEach(function(b){b.setAttribute('aria-pressed',b.dataset.set===l)});
+    try{localStorage.setItem('hw-lang',l)}catch(e){}}
+  var saved=null;try{saved=localStorage.getItem('hw-lang')}catch(e){}
+  var q=new URLSearchParams(location.search).get('lang');
+  set(q==='vi'||q==='en'?q:saved||((navigator.language||'').toLowerCase().indexOf('vi')===0?'vi':'en'));
+  btns.forEach(function(b){b.addEventListener('click',function(){set(b.dataset.set)})});
+})();
+</script>
+</body>
+</html>
