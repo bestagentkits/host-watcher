@@ -21,6 +21,10 @@ until the machine can take them.
 - **Agent-agnostic.** Hooks for Claude Code, Pi and any agent that can run a
   command; an `AGENTS.md` snippet for the rest ([integrations](docs/integrations.md)).
 
+![Task Manager while 18 agent sessions run in parallel: CPU 20%, disk 100% active, 664 ms response time](docs/assets/task-manager-18-sessions.jpg)
+
+*18 coding-agent sessions on one Windows host: CPU is only 20%, but the disk is 100% active with 664 ms latency. host-watcher reports `hold` here; a CPU-only check would say the machine is fine.*
+
 ## Quick start
 
 ```bash
