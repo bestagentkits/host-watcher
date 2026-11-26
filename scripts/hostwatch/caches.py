@@ -136,8 +136,8 @@ def owned(entry):
     """True when the current user owns the dir. Windows has no cheap uid check, so
     there the dir must sit inside the user's own profile (%USERPROFILE%)."""
     if not hasattr(os, "getuid"):
-        profile = os.path.normcase(os.path.abspath(os.environ.get("USERPROFILE") or os.path.expanduser("~")))
-        target = os.path.normcase(os.path.abspath(entry.path))
+        profile = os.path.normcase(os.path.realpath(os.environ.get("USERPROFILE") or os.path.expanduser("~")))
+        target = os.path.normcase(os.path.realpath(entry.path))  # realpath expands 8.3 short names
         return bool(profile) and target.startswith(profile.rstrip("\\/") + os.sep)
     try:
         return entry.stat(follow_symlinks=False).st_uid == os.getuid()
