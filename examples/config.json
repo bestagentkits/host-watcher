@@ -1,0 +1,13 @@
+{
+  "thresholds": {
+    "cpu_throttle_pct": 85,
+    "cpu_hold_pct": 95,
+    "memory_throttle_pct": 88,
+    "memory_hold_pct": 95,
+    "disk_throttle_active_pct": 70,
+    "disk_hold_active_pct": 90,
+    "disk_throttle_latency_ms": 50,
+    "disk_hold_latency_ms": 100,
+    "min_free_gb": 25
+  }
+}

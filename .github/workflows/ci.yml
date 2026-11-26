@@ -1,0 +1,104 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12"]
+        include:
+          - os: ubuntu-latest
+            python: "3.8"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Python unit and CLI tests
+        run: python -m unittest discover -s tests -v
+      - name: Go vet and tests
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Hook tests (Node)
+        run: node --test tests/host-pressure-reminder.test.cjs
+
+      - name: Smoke - status reports cpu and memory
+        shell: bash
+        env:
+          HOST_WATCHER_HOME: ${{ runner.temp }}/hw-smoke
+        run: |
+          python scripts/host_status.py --json --samples 2 --interval 0.5 > status.json
+          cat status.json
+          python - <<'PY'
+          import json, platform
+          d = json.load(open("status.json"))["data"]
+          assert d["verdict"] in ("go", "throttle", "unknown", "clean", "hold"), d["verdict"]
+          assert d["memory"] is not None, d["reasons"]
+          if platform.system() in ("Linux", "Windows"):
+              assert d["cpu"] is not None, d["reasons"]
+          if platform.system() == "Linux":
+              assert d["disk"] is None or d["disk"]["active_pct"] is not None, d["disk"]
+          PY
+
+      - name: Smoke - gate passes the exit code through
+        shell: bash
+        env:
+          HOST_WATCHER_HOME: ${{ runner.temp }}/hw-smoke
+        run: |
+          set +e
+          python scripts/host_gate.py --max-wait 0 -- python -c "import sys; sys.exit(7)"
+          test $? -eq 7
+
+      - name: Smoke - Python and Go watchers share one lock and snapshot
+        shell: bash
+        env:
+          HOST_WATCHER_HOME: ${{ runner.temp }}/hw-interop
+        run: |
+          go build -o "hw-bin$( [ "$RUNNER_OS" = Windows ] && echo .exe )" ./cmd/host-watcher
+          python scripts/host_watch.py --detach --interval 1
+          ./hw-bin watch --detach | tee go-detach.txt
+          grep -q already-running go-detach.txt
+          ./hw-bin status --json | python -c "import json,sys; d=json.load(sys.stdin)['data']; assert d['source']=='watcher', d['source']"
+          python scripts/host_watch.py --stop
+          ./hw-bin watch --detach --interval 1s
+          python scripts/host_status.py --json | python -c "import json,sys; d=json.load(sys.stdin)['data']; assert d['source']=='watcher', d['source']"
+          ./hw-bin watch --stop
+
+      - name: Smoke - cleanup is dry-run by default
+        shell: bash
+        run: |
+          python scripts/cache_cleanup.py --no-inventory --glob 'hw-smoke-*' --json
+
+  cross-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build every release target
+        run: |
+          for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/host-watcher
+            echo "built $t"
+          done
