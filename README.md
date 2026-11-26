@@ -151,6 +151,7 @@ Setup details: [docs/integrations.md](docs/integrations.md).
 
 ## Documentation
 
+- [How it works (EN/VI)](https://bestagentkits.github.io/host-watcher/)
 - [Architecture](docs/architecture.md): components, files, formats.
 - [Configuration and thresholds](docs/configuration.md).
 - [Platform support and limitations](docs/platform-support.md).

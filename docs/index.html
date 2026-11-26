@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>host-watcher: How it works</title>
+<meta name="description" content="How host-watcher samples CPU, memory, disk and free space, turns them into one verdict, and gates heavy commands for parallel coding agents.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:oklch(0.16 0.02 255);--bg2:oklch(0.19 0.022 255);--card:oklch(0.21 0.024 255);--line:oklch(0.32 0.03 255);
+  --fg:oklch(0.94 0.01 255);--muted:oklch(0.72 0.02 255);--accent:oklch(0.78 0.13 220);--code:oklch(0.13 0.02 255);
+  --go:oklch(0.76 0.16 150);--throttle:oklch(0.82 0.15 85);--unknown:oklch(0.68 0.02 255);--clean:oklch(0.72 0.15 300);--hold:oklch(0.68 0.2 25);
+  --r:12px;--s1:8px;--s2:16px;--s3:24px;--s4:40px;--s5:72px;--s6:120px;
+  --display:"Space Grotesk",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+:root[data-theme=light]{--bg:oklch(0.985 0.005 255);--bg2:oklch(0.965 0.008 255);--card:#fff;--line:oklch(0.87 0.012 255);
+  --fg:oklch(0.22 0.02 255);--muted:oklch(0.46 0.02 255);--accent:oklch(0.52 0.15 245);--code:oklch(0.95 0.008 255);
+  --go:oklch(0.55 0.15 150);--throttle:oklch(0.62 0.14 75);--unknown:oklch(0.55 0.02 255);--clean:oklch(0.52 0.18 300);--hold:oklch(0.55 0.2 25)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 var(--display);
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:48px 48px;background-attachment:fixed;background-blend-mode:normal}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 0%,transparent,var(--bg) 70%);pointer-events:none;z-index:0}
+main{position:relative;z-index:1;max-width:1040px;margin:0 auto;padding:var(--s3) var(--s2) var(--s5)}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+code,pre{font-family:var(--mono);font-size:.88em}
+code{background:var(--code);border:1px solid var(--line);padding:.08em .4em;border-radius:5px}
+pre{background:var(--code);border:1px solid var(--line);padding:var(--s2) var(--s3);border-radius:var(--r);overflow-x:auto;line-height:1.8}
+pre .p{color:var(--go);user-select:none}
+nav.top{display:flex;justify-content:space-between;align-items:center;gap:var(--s2);padding:var(--s1) 0 var(--s4)}
+.brand{min-height:44px;font-family:var(--mono);font-weight:600;letter-spacing:.02em;display:flex;align-items:center;gap:10px;color:var(--fg);text-decoration:none}
+.brand i{width:10px;height:10px;border-radius:50%;background:var(--go);box-shadow:0 0 0 4px color-mix(in oklch,var(--go) 25%,transparent);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 8px color-mix(in oklch,var(--go) 0%,transparent)}}
+.tools{display:flex;gap:var(--s1);align-items:center}
+.lang{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--bg2)}
+.lang button,.ghbtn{border:0;background:transparent;color:var(--fg);min-height:40px;padding:0 14px;cursor:pointer;font:500 14px var(--display)}
+.lang button[aria-pressed=true]{background:var(--fg);color:var(--bg)}
+.ghbtn{border:1px solid var(--line);border-radius:999px;background:var(--bg2);display:inline-flex;align-items:center;text-decoration:none}
+.ghbtn:hover,.lang button:hover:not([aria-pressed=true]){background:var(--card)}
+.hero{display:grid;grid-template-columns:1.15fr .85fr;gap:var(--s4);align-items:center;padding:var(--s4) 0 var(--s5)}
+.eyebrow{font:500 13px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 var(--s2)}
+h1{font-size:clamp(2.4rem,5.5vw,4.2rem);line-height:1.02;letter-spacing:-.03em;margin:0 0 var(--s3);font-weight:700}
+h1 em{font-style:normal;background:linear-gradient(90deg,var(--go),var(--throttle),var(--clean),var(--hold));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{color:var(--muted);font-size:1.15rem;max-width:34em;margin:0 0 var(--s3)}
+.cta{display:flex;gap:var(--s1);flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;min-height:44px;padding:0 20px;border-radius:999px;font-weight:500;text-decoration:none;border:1px solid var(--line);color:var(--fg);transition:transform .2s,background .2s}
+.btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn:hover{transform:translateY(-1px)}
+.readout{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:var(--s3);font-family:var(--mono);font-size:13px;box-shadow:0 30px 80px -30px oklch(0 0 0 / .6)}
+.readout .hd{display:flex;justify-content:space-between;color:var(--muted);margin-bottom:var(--s2)}
+.readout .verdict{font:700 2.4rem var(--display);color:var(--throttle);letter-spacing:-.02em;margin:0}
+.meter{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:var(--s2) 0}
+.meter span{height:8px;border-radius:2px;opacity:.25}
+.meter span.on{opacity:1}
+.row{display:grid;grid-template-columns:92px 1fr 52px;gap:10px;align-items:center;padding:6px 0;border-top:1px dashed var(--line)}
+.row b{font-weight:500;color:var(--muted)}
+.bar{height:6px;background:var(--bg2);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:3px}
+.note{color:var(--muted);font-size:11px;margin-top:var(--s2)}
+section{padding:var(--s5) 0 0}
+.sh{display:flex;align-items:baseline;gap:var(--s2);margin-bottom:var(--s2)}
+.sh .n{font:500 13px var(--mono);color:var(--accent)}
+h2{font-size:clamp(1.6rem,3vw,2.2rem);letter-spacing:-.02em;line-height:1.15;margin:0}
+section>p{color:var(--muted);max-width:46em}
+.card{background:color-mix(in oklch,var(--card) 92%,transparent);border:1px solid var(--line);border-radius:16px;padding:var(--s3);margin:var(--s3) 0;backdrop-filter:blur(6px)}
+svg{width:100%;height:auto;display:block}
+.card{overflow-x:auto}
+@media (max-width:760px){.card svg{min-width:720px}}
+svg text{fill:var(--fg);font:500 13px var(--display)}
+svg .m{fill:var(--muted);font:400 10.5px var(--mono)}
+svg .box{fill:var(--bg2);stroke:var(--line);stroke-width:1.2}
+svg .ln{stroke:var(--muted);stroke-width:1.3;fill:none;stroke-dasharray:4 4}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:var(--s3) 0}
+.v{border-radius:var(--r);padding:var(--s2);border:1px solid var(--line);background:var(--card);border-top:3px solid var(--c);transition:transform .2s}
+.v:hover{transform:translateY(-3px)}
+.v b{display:block;font:600 1.05rem var(--mono);color:var(--c);margin-bottom:4px}
+.v small{color:var(--muted);font-size:.9rem;line-height:1.5;display:block}
+.v .lv{font:400 11px var(--mono);color:var(--muted);float:right}
+.dot{display:none}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{border-bottom:1px solid var(--line);padding:12px 16px;text-align:left}
+th{font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td.y{color:var(--go);font-family:var(--mono)}td.n{color:var(--muted);font-family:var(--mono)}
+html[lang=en] [data-l=vi],html[lang=vi] [data-l=en]{display:none!important}
+footer{color:var(--muted);font:13px var(--mono);margin-top:var(--s6);padding-top:var(--s3);border-top:1px solid var(--line);display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--s1)}
+@media (max-width:860px){.hero{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}.ghbtn{display:none}}
+@media (max-width:420px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<nav class="top">
+  <a class="brand" href="https://github.com/bestagentkits/host-watcher"><i></i>host-watcher</a>
+  <div class="tools">
+    <div class="lang" role="group" aria-label="Language"><button type="button" data-set="en">EN</button><button type="button" data-set="vi">VI</button></div>
+    <button type="button" class="ghbtn" id="theme" aria-label="Toggle theme">◐</button>
+    <a class="ghbtn" href="https://github.com/bestagentkits/host-watcher">GitHub ↗</a>
+  </div>
+</nav>
+<div class="hero">
+  <div>
+    <p class="eyebrow"><span data-l="en">How it works</span><span data-l="vi">Cách hoạt động</span></p>
+    <h1><span data-l="en">One verdict for a machine shared by <em>many agents</em>.</span><span data-l="vi">Một kết luận cho chiếc máy <em>nhiều agent</em> dùng chung.</span></h1>
+    <p class="lead"><span data-l="en">host-watcher measures CPU, memory, disk and free space, tells every coding agent the same thing, and makes heavy commands wait their turn. Local only.</span><span data-l="vi">host-watcher đo CPU, bộ nhớ, ổ đĩa và dung lượng trống, báo cùng một thông tin cho mọi coding agent, và cho lệnh nặng chờ đến lượt. Chạy hoàn toàn cục bộ.</span></p>
+    <div class="cta"><a class="btn primary" href="#quick"><span data-l="en">Quick start</span><span data-l="vi">Bắt đầu nhanh</span></a><a class="btn" href="https://github.com/bestagentkits/host-watcher/releases">Releases</a></div>
+  </div>
+  <div class="readout" aria-label="Example status readout">
+    <div class="hd"><span>$ host_status.py</span><span>sampled</span></div>
+    <p class="verdict">throttle</p>
+    <div class="meter"><span style="background:var(--go)" class="on"></span><span style="background:var(--throttle)" class="on"></span><span style="background:var(--unknown)"></span><span style="background:var(--clean)"></span><span style="background:var(--hold)"></span></div>
+    <div class="row"><b>cpu</b><div class="bar"><i style="width:62%;background:var(--go)"></i></div><span>62%</span></div>
+    <div class="row"><b>memory</b><div class="bar"><i style="width:71%;background:var(--go)"></i></div><span>71%</span></div>
+    <div class="row"><b>disk active</b><div class="bar"><i style="width:78%;background:var(--throttle)"></i></div><span>78%</span></div>
+    <div class="row"><b>free</b><div class="bar"><i style="width:40%;background:var(--go)"></i></div><span>182G</span></div>
+    <p class="note"><span data-l="en">Illustrative values, not a real machine.</span><span data-l="vi">Số liệu minh hoạ, không phải máy thật.</span></p>
+  </div>
+</div>
+
+<section id="problem"><div class="sh"><span class="n">01</span><h2><span data-l="en">The problem</span><span data-l="vi">Vấn đề</span></h2></div>
+<p data-l="en">Run five agents in five worktrees and they all start <code>npm install</code>, test suites and builds at the same moment. The disk saturates, everything slows down, and nobody can tell which job did it. host-watcher measures the machine, tells every agent the same thing, and lets heavy commands wait their turn. It runs locally: no network, no telemetry, no database, no required daemon.</p>
+<p data-l="vi">Chạy năm agent trong năm worktree, cả năm cùng lúc bắt đầu <code>npm install</code>, test và build. Ổ đĩa quá tải, mọi thứ chậm lại, và không ai biết job nào gây ra. host-watcher đo tình trạng máy, báo cùng một thông tin cho mọi agent, và cho các lệnh nặng chờ đến lượt. Mọi thứ chạy cục bộ: không gọi mạng, không telemetry, không database, không bắt buộc chạy daemon.</p>
+
+</section>
+<section id="architecture"><div class="sh"><span class="n">02</span><h2><span data-l="en">Architecture</span><span data-l="vi">Kiến trúc</span></h2></div>
+<div class="card">
+<svg viewBox="0 0 900 360" role="img" aria-label="Architecture diagram">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <rect class="box" x="20" y="30" width="170" height="130" rx="10"/>
+  <text x="105" y="58" text-anchor="middle" font-weight="600">OS counters</text>
+  <text class="m" x="105" y="82" text-anchor="middle">/proc · vm_stat · PDH</text>
+  <text class="m" x="105" y="102" text-anchor="middle">CPU · memory</text>
+  <text class="m" x="105" y="122" text-anchor="middle">disk active % · latency</text>
+  <text class="m" x="105" y="142" text-anchor="middle">free space · per-process I/O</text>
+
+  <rect class="box" x="260" y="30" width="190" height="130" rx="10" style="stroke:var(--accent)"/>
+  <text x="355" y="58" text-anchor="middle" font-weight="600">watcher</text>
+  <text class="m" x="355" y="82" text-anchor="middle">host_watch.py (or Go binary)</text>
+  <text class="m" x="355" y="102" text-anchor="middle">samples every few seconds</text>
+  <text class="m" x="355" y="122" text-anchor="middle">median of samples → verdict</text>
+  <text class="m" x="355" y="142" text-anchor="middle">one instance (watch.lock)</text>
+
+  <rect class="box" x="520" y="20" width="200" height="150" rx="10"/>
+  <text x="620" y="46" text-anchor="middle" font-weight="600">~/.host-watcher/</text>
+  <text class="m" x="620" y="72" text-anchor="middle">status.json (snapshot, ≤15 s fresh)</text>
+  <text class="m" x="620" y="94" text-anchor="middle">inbox/&lt;worktree-hash&gt;.json</text>
+  <text class="m" x="620" y="116" text-anchor="middle">config.json (thresholds)</text>
+  <text class="m" x="620" y="138" text-anchor="middle">watch.lock · watch.pid</text>
+  <text class="m" x="620" y="158" text-anchor="middle">shared by Python and Go</text>
+
+  <path class="ln" d="M190 95H258" marker-end="url(#a)"/>
+  <path class="ln" d="M450 95H518" marker-end="url(#a)"/>
+
+  <rect class="box" x="20" y="230" width="190" height="100" rx="10"/>
+  <text x="115" y="258" text-anchor="middle" font-weight="600">host_status.py</text>
+  <text class="m" x="115" y="282" text-anchor="middle">read snapshot, or</text>
+  <text class="m" x="115" y="302" text-anchor="middle">sample once if stale</text>
+
+  <rect class="box" x="240" y="230" width="190" height="100" rx="10"/>
+  <text x="335" y="258" text-anchor="middle" font-weight="600">host_gate.py -- cmd</text>
+  <text class="m" x="335" y="282" text-anchor="middle">wait on hold / clean</text>
+  <text class="m" x="335" y="302" text-anchor="middle">then run at low priority</text>
+
+  <rect class="box" x="460" y="230" width="190" height="100" rx="10"/>
+  <text x="555" y="258" text-anchor="middle" font-weight="600">agent hooks</text>
+  <text class="m" x="555" y="282" text-anchor="middle">Claude Code · Pi · Codex</text>
+  <text class="m" x="555" y="302" text-anchor="middle">read-only, always exit 0</text>
+
+  <rect class="box" x="680" y="230" width="200" height="100" rx="10"/>
+  <text x="780" y="258" text-anchor="middle" font-weight="600">cache_cleanup.py</text>
+  <text class="m" x="780" y="282" text-anchor="middle">inventory + dry-run</text>
+  <text class="m" x="780" y="302" text-anchor="middle">--apply only when safe</text>
+
+  <path class="ln" d="M560 170L130 228" marker-end="url(#a)"/>
+  <path class="ln" d="M590 170L340 228" marker-end="url(#a)"/>
+  <path class="ln" d="M620 170V228" marker-end="url(#a)"/>
+  <path class="ln" d="M660 170L770 228" marker-end="url(#a)"/>
+</svg>
+</div>
+<p data-l="en">One optional watcher samples the OS and writes a snapshot. Everything else reads that snapshot, so ten agents asking "is the machine busy?" cost nothing. Without a watcher, <code>host_status.py</code> and the gate sample on their own.</p>
+<p data-l="vi">Một watcher (tuỳ chọn) đọc số liệu từ hệ điều hành và ghi ra một snapshot. Mọi thành phần khác chỉ đọc snapshot đó, nên mười agent cùng hỏi "máy có đang bận không?" cũng gần như không tốn gì. Khi không có watcher, <code>host_status.py</code> và gate sẽ tự đo.</p>
+
+</section>
+<section id="verdicts"><div class="sh"><span class="n">03</span><h2><span data-l="en">Five verdicts</span><span data-l="vi">Năm kết luận</span></h2></div>
+<div class="grid">
+  <div class="v" style="--c:var(--go)"><b>go</b><small data-l="en">Plenty of headroom. Run anything.</small><small data-l="vi">Máy còn dư sức. Chạy gì cũng được.</small></div>
+  <div class="v" style="--c:var(--throttle)"><b>throttle</b><small data-l="en">Busy. Run, but avoid starting extra parallel jobs.</small><small data-l="vi">Máy đang bận. Vẫn chạy, nhưng đừng mở thêm job song song.</small></div>
+  <div class="v" style="--c:var(--unknown)"><b>unknown</b><small data-l="en">Nothing could be measured. Never blocks.</small><small data-l="vi">Không đo được gì. Không bao giờ chặn lệnh.</small></div>
+  <div class="v" style="--c:var(--clean)"><b>clean</b><small data-l="en">A watched volume is low on free space. Free some first.</small><small data-l="vi">Một ổ đang theo dõi sắp hết chỗ. Hãy dọn bớt trước.</small></div>
+  <div class="v" style="--c:var(--hold)"><b>hold</b><small data-l="en">Saturated. Heavy commands wait.</small><small data-l="vi">Máy đã quá tải. Lệnh nặng phải chờ.</small></div>
+</div>
+<p data-l="en">Severity order: go &lt; throttle &lt; unknown &lt; clean &lt; hold. The worst signal wins. Every verdict exits 0, so scripts read the verdict, not the exit code.</p>
+<p data-l="vi">Thứ tự mức độ: go &lt; throttle &lt; unknown &lt; clean &lt; hold. Tín hiệu tệ nhất quyết định kết luận. Mọi kết luận đều trả exit code 0, nên script cần đọc kết luận chứ không dựa vào exit code.</p>
+
+</section>
+<section id="decide"><div class="sh"><span class="n">04</span><h2><span data-l="en">How a verdict is decided</span><span data-l="vi">Kết luận được quyết định thế nào</span></h2></div>
+<div class="card">
+<svg viewBox="0 0 900 250" role="img" aria-label="Decision flow">
+  <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <rect class="box" x="10" y="95" width="130" height="60" rx="10"/>
+  <text x="75" y="122" text-anchor="middle" font-weight="600">3 samples</text>
+  <text class="m" x="75" y="142" text-anchor="middle">take the median</text>
+  <path class="ln" d="M140 125H178" marker-end="url(#b)"/>
+
+  <g>
+  <rect class="box" x="180" y="10" width="360" height="50" rx="8"/>
+  <text x="195" y="32" font-weight="600">Disk</text>
+  <text class="m" x="195" y="50">active ≥90% or ≥100 ms → hold · ≥70% / ≥50 ms → throttle</text>
+  <rect class="box" x="180" y="70" width="360" height="50" rx="8"/>
+  <text x="195" y="92" font-weight="600">CPU · Memory</text>
+  <text class="m" x="195" y="110">CPU ≥95% / mem ≥95% → hold · ≥85% / ≥88% → throttle</text>
+  <rect class="box" x="180" y="130" width="360" height="50" rx="8"/>
+  <text x="195" y="152" font-weight="600">Free space</text>
+  <text class="m" x="195" y="170">any watched volume &lt; 25 GB free → clean</text>
+  <rect class="box" x="180" y="190" width="360" height="50" rx="8"/>
+  <text x="195" y="212" font-weight="600">Nothing measured</text>
+  <text class="m" x="195" y="230">no CPU, memory or disk sample → unknown</text>
+  </g>
+  <path class="ln" d="M540 35C590 35 590 125 612 125" marker-end="url(#b)"/>
+  <path class="ln" d="M540 95C580 95 590 125 612 125"/>
+  <path class="ln" d="M540 155C580 155 590 125 612 125"/>
+  <path class="ln" d="M540 215C590 215 590 125 612 125"/>
+  <rect class="box" x="614" y="90" width="140" height="70" rx="10" style="stroke:var(--accent)"/>
+  <text x="684" y="120" text-anchor="middle" font-weight="600">worst wins</text>
+  <text class="m" x="684" y="140" text-anchor="middle">max severity</text>
+  <path class="ln" d="M754 125H782" marker-end="url(#b)"/>
+  <rect x="782" y="100" width="105" height="50" rx="25" fill="var(--hold)" opacity=".15" stroke="var(--hold)"/>
+  <text x="834" y="130" text-anchor="middle" font-weight="600">verdict</text>
+</svg>
+</div>
+<p data-l="en">Only disk <em>active time</em> and <em>latency</em> count. A fast sequential copy at high throughput is not contention; queued I/O waiting on the disk is. All thresholds live in <code>config.json</code> (see <a href="configuration.md">configuration</a>).</p>
+<p data-l="vi">Với ổ đĩa, chỉ <em>thời gian bận</em> (active time) và <em>độ trễ</em> (latency) được tính. Một lệnh copy tuần tự nhanh, throughput cao, không phải là tranh chấp; I/O phải xếp hàng chờ ổ đĩa mới là tranh chấp. Mọi ngưỡng nằm trong <code>config.json</code> (xem <a href="configuration.md">configuration</a>).</p>
+
+</section>
+<section id="gate"><div class="sh"><span class="n">05</span><h2><span data-l="en">The gate</span><span data-l="vi">Gate</span></h2></div>
+<div class="card">
+<svg viewBox="0 0 900 200" role="img" aria-label="Gate timeline">
+  <defs><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <path class="ln" d="M20 110H880" marker-end="url(#c)"/>
+  
+  <rect x="30" y="80" width="90" height="60" rx="8" fill="var(--hold)" opacity=".18" stroke="var(--hold)"/>
+  <text x="75" y="106" text-anchor="middle" font-weight="600">hold</text><text class="m" x="75" y="124" text-anchor="middle">wait 15 s</text>
+  <rect x="130" y="80" width="140" height="60" rx="8" fill="var(--hold)" opacity=".18" stroke="var(--hold)"/>
+  <text x="200" y="106" text-anchor="middle" font-weight="600">hold</text><text class="m" x="200" y="124" text-anchor="middle">wait 30 s</text>
+  <rect x="280" y="80" width="220" height="60" rx="8" fill="var(--clean)" opacity=".18" stroke="var(--clean)"/>
+  <text x="390" y="106" text-anchor="middle" font-weight="600">clean</text><text class="m" x="390" y="124" text-anchor="middle">wait 60 s (then 60 s …)</text>
+  <rect x="510" y="80" width="110" height="60" rx="8" fill="var(--go)" opacity=".18" stroke="var(--go)"/>
+  <text x="565" y="106" text-anchor="middle" font-weight="600">go</text><text class="m" x="565" y="124" text-anchor="middle">start</text>
+  <rect x="630" y="80" width="220" height="60" rx="8" class="box" style="stroke:var(--accent)"/>
+  <text x="740" y="106" text-anchor="middle" font-weight="600">npm run build</text><text class="m" x="740" y="124" text-anchor="middle">low CPU + I/O priority</text>
+  <text class="m" x="30" y="40">max wait 30 min → run anyway with a warning · --max-wait 0 skips waiting</text>
+  <text class="m" x="30" y="60">exit code = child's exit code · 5 = could not start · 2 = bad arguments</text>
+  <text class="m" x="30" y="175">nice + ionice (Linux) · taskpolicy -b (macOS) · BELOW_NORMAL (Windows)</text>
+</svg>
+</div>
+<pre><span class="p">$ </span>python scripts/host_gate.py -- npm run build</pre>
+<p data-l="en">The gate never refuses to run. It waits only on <code>hold</code> and <code>clean</code>, backs off 15 → 30 → 60 seconds, then starts the command at low priority and passes its exit code and signals through. If the status cannot be read, it runs immediately.</p>
+<p data-l="vi">Gate không bao giờ từ chối chạy lệnh. Nó chỉ chờ khi kết luận là <code>hold</code> hoặc <code>clean</code>, giãn thời gian chờ 15 → 30 → 60 giây, sau đó chạy lệnh ở mức ưu tiên thấp và chuyển tiếp nguyên exit code và tín hiệu. Nếu không đọc được trạng thái máy, nó chạy ngay.</p>
+
+</section>
+<section id="inbox"><div class="sh"><span class="n">06</span><h2><span data-l="en">Worktree inbox</span><span data-l="vi">Inbox theo worktree</span></h2></div>
+<div class="card">
+<svg viewBox="0 0 900 190" role="img" aria-label="Worktree inbox flow">
+  <defs><marker id="d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <rect class="box" x="20" y="60" width="180" height="70" rx="10"/>
+  <text x="110" y="90" text-anchor="middle" font-weight="600">watcher sees</text>
+  <text class="m" x="110" y="110" text-anchor="middle">top I/O pid in worktree B</text>
+  <path class="ln" d="M200 95H258" marker-end="url(#d)"/>
+  <rect class="box" x="260" y="60" width="230" height="70" rx="10"/>
+  <text x="375" y="90" text-anchor="middle" font-weight="600">inbox/sha256(B)[:16].json</text>
+  <text class="m" x="375" y="110" text-anchor="middle">expires after 10 min</text>
+  <path class="ln" d="M490 95H548" marker-end="url(#d)"/>
+  <rect class="box" x="550" y="20" width="330" height="60" rx="10"/>
+  <text x="565" y="45" font-weight="600">agent in worktree B</text>
+  <text class="m" x="565" y="65">hook/gate: "your job is the top I/O user"</text>
+  <rect class="box" x="550" y="110" width="330" height="60" rx="10"/>
+  <text x="565" y="135" font-weight="600">agents in A, C, D</text>
+  <text class="m" x="565" y="155">see only the shared verdict</text>
+</svg>
+</div>
+<p data-l="en">The watcher maps the heaviest I/O process to its git worktree and leaves a notice only for that worktree, so the agent that caused the pressure is the one asked to slow down. Needs per-process I/O: Linux, or Windows with the Go watcher.</p>
+<p data-l="vi">Watcher tìm process đang ghi/đọc đĩa nhiều nhất, xác định nó thuộc git worktree nào, rồi chỉ để lại thông báo cho đúng worktree đó. Nhờ vậy agent gây ra áp lực là agent được nhắc chậm lại. Tính năng này cần số liệu I/O theo từng process: có trên Linux, và trên Windows khi dùng watcher bản Go.</p>
+
+</section>
+<section id="cleanup"><div class="sh"><span class="n">07</span><h2><span data-l="en">Safe cache cleanup</span><span data-l="vi">Dọn cache an toàn</span></h2></div>
+<div class="card">
+<svg viewBox="0 0 900 140" role="img" aria-label="Cleanup filter">
+  <defs><marker id="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+  <g font-weight="600">
+  <rect class="box" x="10" y="40" width="120" height="56" rx="8"/><text x="70" y="73" text-anchor="middle">--glob match</text>
+  <rect class="box" x="150" y="40" width="120" height="56" rx="8"/><text x="210" y="73" text-anchor="middle">real dir</text>
+  <rect class="box" x="290" y="40" width="120" height="56" rx="8"/><text x="350" y="73" text-anchor="middle">owned by you</text>
+  <rect class="box" x="430" y="40" width="120" height="56" rx="8"/><text x="490" y="73" text-anchor="middle">idle ≥ 60 min</text>
+  <rect class="box" x="570" y="40" width="140" height="56" rx="8"/><text x="640" y="73" text-anchor="middle">no live process</text>
+  <rect x="730" y="40" width="160" height="56" rx="8" fill="var(--go)" opacity=".18" stroke="var(--go)"/><text x="810" y="73" text-anchor="middle">candidate</text>
+  </g>
+  <path class="ln" d="M130 68H148" marker-end="url(#e)"/><path class="ln" d="M270 68H288" marker-end="url(#e)"/>
+  <path class="ln" d="M410 68H428" marker-end="url(#e)"/><path class="ln" d="M550 68H568" marker-end="url(#e)"/>
+  <path class="ln" d="M710 68H728" marker-end="url(#e)"/>
+  <text class="m" x="10" y="125">no symlinks · no junctions · process list unreadable → nothing deleted · dry-run unless --apply</text>
+</svg>
+</div>
+<p data-l="en">Shared package caches (npm, pip, Go, Cargo…) are only listed with their own prune command; host-watcher never deletes them. See <a href="cleanup-safety.md">cleanup safety</a>.</p>
+<p data-l="vi">Các cache dùng chung của trình quản lý gói (npm, pip, Go, Cargo…) chỉ được liệt kê kèm lệnh dọn riêng của chúng; host-watcher không bao giờ tự xoá. Xem <a href="cleanup-safety.md">cleanup safety</a>.</p>
+
+</section>
+<section id="platforms"><div class="sh"><span class="n">08</span><h2><span data-l="en">Platform support</span><span data-l="vi">Nền tảng hỗ trợ</span></h2></div>
+<div class="tw"><table>
+<tr><th></th><th>Linux</th><th>WSL</th><th>Windows</th><th>macOS</th></tr>
+<tr><td>CPU · memory</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+<tr><td><span data-l="en">Disk active / latency</span><span data-l="vi">Độ bận / độ trễ ổ đĩa</span></td><td class="y">✓</td><td><span data-l="en">virtual disk</span><span data-l="vi">ổ ảo</span></td><td class="y">✓</td><td class="n">—</td></tr>
+<tr><td><span data-l="en">Free space</span><span data-l="vi">Dung lượng trống</span></td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+<tr><td><span data-l="en">Worktree inbox</span><span data-l="vi">Inbox theo worktree</span></td><td class="y">✓</td><td class="y">✓</td><td><span data-l="en">Go watcher</span><span data-l="vi">watcher bản Go</span></td><td class="n">—</td></tr>
+</table></div>
+<p data-l="en">Details in <a href="platform-support.md">platform support</a>.</p>
+<p data-l="vi">Chi tiết trong <a href="platform-support.md">platform support</a>.</p>
+
+</section>
+<section id="quick"><div class="sh"><span class="n">09</span><h2><span data-l="en">Quick start</span><span data-l="vi">Bắt đầu nhanh</span></h2></div>
+<pre><span class="p">$ </span>git clone https://github.com/bestagentkits/host-watcher
+<span class="p">$ </span>cd host-watcher
+<span class="p">$ </span>python scripts/host_status.py
+<span class="p">$ </span>python scripts/host_watch.py --detach
+<span class="p">$ </span>python scripts/host_gate.py -- npm run build
+<span class="p">$ </span>python scripts/cache_cleanup.py --dry-run</pre>
+<p data-l="en">Hooks for Claude Code, Pi, Codex and others: <a href="integrations.md">integrations</a>. Prebuilt Go binaries: <a href="https://github.com/bestagentkits/host-watcher/releases">releases</a>.</p>
+<p data-l="vi">Hook cho Claude Code, Pi, Codex và các agent khác: <a href="integrations.md">integrations</a>. Binary Go dựng sẵn: <a href="https://github.com/bestagentkits/host-watcher/releases">releases</a>.</p>
+
+</section>
+<footer><span>MIT License</span><a href="https://github.com/bestagentkits/host-watcher">github.com/bestagentkits/host-watcher</a></footer>
+</main>
+<script>
+(function(){
+  var html=document.documentElement, btns=document.querySelectorAll('.lang button');
+  function set(l){html.lang=l;btns.forEach(function(b){b.setAttribute('aria-pressed',b.dataset.set===l)});
+    try{localStorage.setItem('hw-lang',l)}catch(e){}}
+  var saved=null;try{saved=localStorage.getItem('hw-lang')}catch(e){}
+  var q=new URLSearchParams(location.search).get('lang');
+  set(q==='vi'||q==='en'?q:saved||((navigator.language||'').toLowerCase().indexOf('vi')===0?'vi':'en'));
+  btns.forEach(function(b){b.addEventListener('click',function(){set(b.dataset.set)})});
+  var t=null;try{t=localStorage.getItem('hw-theme')}catch(e){}
+  if(!t&&matchMedia('(prefers-color-scheme: light)').matches)t='light';
+  if(t)html.dataset.theme=t;
+  document.getElementById('theme').addEventListener('click',function(){
+    var n=html.dataset.theme==='light'?'dark':'light';html.dataset.theme=n;try{localStorage.setItem('hw-theme',n)}catch(e){}});
+})();
+</script>
+</body>
+</html>
